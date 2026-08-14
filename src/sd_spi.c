@@ -2,7 +2,7 @@
 Author      - Calvin Gross
 Date        - 8/11/26
 Modified    - 8/12/26
-Title       - SD Card SPI
+Title       - SD Card SPI Layer
 Project     - Full Attitude and Heading Reference System
 Description - In this file I abstract away the SPI hardware by declaring 7 functions
             at the bottom of this file. The first 2 are setting the clock speed, which 
@@ -108,6 +108,9 @@ HAL_StatusTypeDef SD_SPI_Receive_Data(SD_SPI_Handle *cur_handle, uint8_t *receiv
     return HAL_SPI_Receive(cur_handle->hspi, receive_adr, byte_count, 100);
 }
 
+/** Function for sending 10 0xff bytes which are used as a transition period between
+    different clock speeds.
+ */
 HAL_StatusTypeDef SD_SPI_Send_Idle_Clocks(SD_SPI_Handle *cur_handle) {
     if (cur_handle == NULL || cur_handle->hspi == NULL) {
         return HAL_ERROR;
