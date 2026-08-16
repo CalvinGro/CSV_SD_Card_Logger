@@ -1,6 +1,9 @@
 /*
 Author      - Calvin Gross
 Date        - 8/12/26
+Modified    - 8/13/26
+Modified    - 8/14/26
+Modified    - 8/15/26
 Title       - SD Card SPI
 Project     - Full Attitude and Heading Reference System
 Description - In this file I abstract away the SD Card protocols. This handles
@@ -11,6 +14,7 @@ Description - In this file I abstract away the SD Card protocols. This handles
 #include "sd_card.h"
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 
 /** Calculate the Cyclic Redundancy Check (CRC) for any 16-bit pattern. 
@@ -89,7 +93,7 @@ HAL_StatusTypeDef Wait_To_Receive(Card_Handle *card) {
         }
     } while ((HAL_GetTick() - start_time < 300) && received_byte != 0xfe);
 
-    if (received_byte == 0xff) return HAL_OK;
+    if (received_byte == 0xfe) return HAL_OK;
     return HAL_TIMEOUT;
 }
 
@@ -170,10 +174,11 @@ HAL_StatusTypeDef Send_Command(Card_Handle *card, uint8_t cmd, uint32_t cmd_arg,
     return HAL_OK;
 }
 
+
 /** Calculate the number of sectors in the current card.
  */
-HAL_StatusTypeDef Get_Sector_Count(Card_Handle *card, uint64_t *sector_count_adr) {
-    if (card == NULL || card->spi_handle == NULL || sector_count_adr == NULL) {
+HAL_StatusTypeDef Get_Sector_Count(Card_Handle *card) {
+    if (card == NULL || card->spi_handle == NULL) {
         return HAL_ERROR;
     }
 
@@ -229,7 +234,7 @@ HAL_StatusTypeDef Get_Sector_Count(Card_Handle *card, uint64_t *sector_count_adr
     // Find the c_size from the CSD register.
     uint64_t c_size = (((uint64_t)CSD_reg[7] & 0x3f) << 16) | ((uint64_t)CSD_reg[8] << 8) | (uint64_t)CSD_reg[9];
 
-    *sector_count_adr = (c_size + 1) * 1024;
+    card->card_sector_count = (c_size + 1) * 1024;
 
     status = HAL_OK;
 
@@ -247,6 +252,161 @@ cleanup:
 /** This init function first resets the card into SPI mode, than validates the
     card, waits for the card to be ready, 
  */
-HAL_StatusTypeDef Card_Init(Card_Handle *card,) {
+HAL_StatusTypeDef Card_Init(Card_Handle *card) {
+    if (
+        card == NULL || 
+        card->spi_handle == NULL || 
+        card->spi_handle->hspi == NULL
+    ) {
+        return HAL_ERROR;
+    }    
 
+    HAL_StatusTypeDef status;
+
+    // set SPI to init speed
+    status = SD_SPI_SetInitializationSpeed(card->spi_handle);
+    if (status != HAL_OK) return HAL_ERROR;
+
+    // Deselect CS then send init clock cycles. 
+    status = SD_SPI_Deselect_Card(card->spi_handle);
+    if (status != HAL_OK) return HAL_ERROR;
+    status = SD_SPI_Send_Idle_Clocks(card->spi_handle);
+    if (status != HAL_OK) return HAL_ERROR;
+
+    // Select the sd card with CS
+    status = SD_SPI_Select_Card(card->spi_handle);
+    if (status != HAL_OK) return HAL_ERROR;
+
+    
+    uint8_t R1_response;
+    uint8_t R3_response[4];
+    uint8_t R7_response[4];
+    uint8_t attempt_count = 0;
+    // Call CMD0 to go to the idle SPI state.
+    do {
+        uint8_t cmd0 = 0x00;
+        uint32_t cmd0_arg = 0;
+
+        status = Send_Command(card, cmd0, cmd0_arg, &R1_response);
+        if (status != HAL_OK) goto cleanup_error;
+
+        attempt_count++;
+    } while (R1_response != 0x01 && attempt_count < 3);
+    if (R1_response != 0x01) {
+        status = HAL_ERROR;
+        goto cleanup_error;
+    }
+
+    attempt_count = 0;
+    // Call CMD8 to check whether the card is compatible with my implementation and within: 2.7 - 3.6V
+    do {
+        uint8_t cmd8 = 0x08;
+        uint32_t cmd8_arg = 0x000001d4;
+
+        status = Send_Command(card, cmd8, cmd8_arg, &R1_response);
+        if (status != HAL_OK) goto cleanup_error;
+
+        attempt_count++;
+    } while (R1_response != 0x01 && attempt_count < 3);
+    if (R1_response != 0x01) {
+        status = HAL_ERROR;
+        goto cleanup_error;
+    }
+    // Once R1 passes, check R7 
+    status = SD_SPI_Receive_Data(card->spi_handle, R7_response, sizeof(R7_response));
+    if (status != HAL_OK) goto cleanup_error;
+    if (
+        R7_response[3] != 0xd4 || 
+        R7_response[2] != 0x01 || 
+        R7_response[1] != 0x00 || 
+        R7_response[0] != 0x00
+    ) {
+        status = HAL_ERROR;
+        goto cleanup_error;
+    }
+    
+    attempt_count = 0;
+    // Call CMD55 then ACMD41 to run the application specific card init function.
+    do {
+        uint8_t cmd55 = 0x37;
+        uint32_t cmd55_arg = 0;
+        uint8_t acmd41 = 0x29;
+        // tells card that the host capacity support (HCS) can support SDHC/SDXC
+        uint32_t acmd41_arg = 0x40000000;
+
+        status = Send_Command(card, cmd55, cmd55_arg, &R1_response);
+        if (status != HAL_OK) goto cleanup_error;
+        if (R1_response != 0x01) {
+            status = HAL_ERROR;
+            goto cleanup_error;
+        }
+
+        status = Send_Command(card, acmd41, acmd41_arg, &R1_response);
+        if (status != HAL_OK) goto cleanup_error;
+        if (R1_response != 0x01 && R1_response != 0x00) {
+            status = HAL_ERROR;
+            goto cleanup_error;
+        }
+
+        attempt_count++;
+    } while (R1_response != 0x00 && attempt_count < 100);
+    if (R1_response != 0x00) {
+        status = HAL_ERROR;
+        goto cleanup_error;
+    }
+
+    // Call CMD58 to get card capacity status (CCS)
+    uint8_t cmd58 = 0x3a;
+    uint32_t cmd58_arg = 0;
+
+    status = Send_Command(card, cmd58, cmd58_arg, &R1_response);
+    if (status != HAL_OK) goto cleanup_error;
+
+    if (R1_response != 0x00) {
+        status = HAL_ERROR;
+        goto cleanup_error;
+    }
+    // receive R3 response and check that power-up init is complete and that the card is SDHC or SDXC.
+    status = SD_SPI_Receive_Data(card->spi_handle, R3_response, sizeof(R3_response));
+    if (status != HAL_OK) goto cleanup_error;
+    if ((R3_response[0] & 0xc0) != 0xc0) {
+        status = HAL_ERROR;
+        goto cleanup_error;
+    }
+
+    // Call CMD59 and enable CRC for error checking.
+    uint8_t cmd59 = 0x3b;
+    uint32_t cmd59_arg = 0x00000001;
+
+    status = Send_Command(card, cmd59, cmd59_arg, &R1_response);
+    if (status != HAL_OK) goto cleanup_error;
+    if (R1_response != 0x00) {
+        status = HAL_ERROR;
+        goto cleanup_error;
+    }
+
+    // deselect the card
+    status = SD_SPI_Deselect_Card(card->spi_handle);
+    if (status != HAL_OK) return HAL_ERROR;
+    uint8_t filler_response;
+    status = SD_SPI_Interchange_Byte(card->spi_handle, 0xff, &filler_response);
+    if (status != HAL_OK) return status;
+
+    status = SD_SPI_SetOperatingSpeed(card->spi_handle);
+    if (status != HAL_OK) return status;
+
+
+
+    status = Get_Sector_Count(card);
+    if (status != HAL_OK) return status;
+
+    return HAL_OK;
+
+cleanup_error:
+    (void)SD_SPI_Deselect_Card(card->spi_handle);
+
+    // transmit 0xff byte to provide trailing clocks after CS deselects the chip to reset SPI.
+    (void)SD_SPI_Interchange_Byte(card->spi_handle, 0xff, &filler_response);
+
+    return status;
 }

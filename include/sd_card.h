@@ -6,7 +6,7 @@
 
 typedef struct {
     SD_SPI_Handle *spi_handle;
-    uint32_t card_sector_count; 
+    uint64_t card_sector_count; 
 } Card_Handle;
 
 

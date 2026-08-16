@@ -2,6 +2,7 @@
 Author      - Calvin Gross
 Date        - 8/11/26
 Modified    - 8/12/26
+Modified    - 8/15/26
 Title       - SD Card SPI Layer
 Project     - Full Attitude and Heading Reference System
 Description - In this file I abstract away the SPI hardware by declaring 7 functions
@@ -18,6 +19,7 @@ Description - In this file I abstract away the SPI hardware by declaring 7 funct
 
 #include "sd_spi.h"
 #include <string.h>
+#include <stdint.h>
 
 
 HAL_StatusTypeDef SD_SPI_Init(SD_SPI_Handle *new_handle, GPIO_TypeDef *cs_port, uint16_t cs_pin, SPI_HandleTypeDef *hspi) {
@@ -108,8 +110,7 @@ HAL_StatusTypeDef SD_SPI_Receive_Data(SD_SPI_Handle *cur_handle, uint8_t *receiv
     return HAL_SPI_Receive(cur_handle->hspi, receive_adr, byte_count, 100);
 }
 
-/** Function for sending 10 0xff bytes which are used as a transition period between
-    different clock speeds.
+/** Function for sending 10 0xff bytes which are required for startup.
  */
 HAL_StatusTypeDef SD_SPI_Send_Idle_Clocks(SD_SPI_Handle *cur_handle) {
     if (cur_handle == NULL || cur_handle->hspi == NULL) {
