@@ -54,23 +54,6 @@ HAL_StatusTypeDef SD_SPI_SetInitializationSpeed(SD_SPI_Handle *cur_handle) {
     return HAL_SPI_Init(cur_handle->hspi);
 }
 
-// Set and reset Chip Select functions.
-HAL_StatusTypeDef SD_SPI_Select_Card(SD_SPI_Handle *cur_handle) {
-    if (cur_handle == NULL || cur_handle->cs_port == NULL || cur_handle->cs_pin == 0) {
-        return HAL_ERROR;
-    }
-    HAL_GPIO_WritePin(cur_handle->cs_port, cur_handle->cs_pin, GPIO_PIN_RESET);
-
-    return HAL_OK;
-}
-HAL_StatusTypeDef SD_SPI_Deselect_Card(SD_SPI_Handle *cur_handle) {
-        if (cur_handle == NULL || cur_handle->cs_port == NULL || cur_handle->cs_pin == 0) {
-        return HAL_ERROR;
-    }
-    HAL_GPIO_WritePin(cur_handle->cs_port, cur_handle->cs_pin, GPIO_PIN_SET);
-
-    return HAL_OK;
-}
 
 /** Function to transmit and receive a byte because I am always using full duplex spi.
     Most use-cases will not need both the transmitted_byte or received_byte_adr, in which 
@@ -109,6 +92,28 @@ HAL_StatusTypeDef SD_SPI_Receive_Data(SD_SPI_Handle *cur_handle, uint8_t *receiv
 
     return HAL_SPI_Receive(cur_handle->hspi, receive_adr, byte_count, 100);
 }
+
+
+// Set and reset Chip Select functions.
+HAL_StatusTypeDef SD_SPI_Select_Card(SD_SPI_Handle *cur_handle) {
+    if (cur_handle == NULL || cur_handle->cs_port == NULL || cur_handle->cs_pin == 0) {
+        return HAL_ERROR;
+    }
+    HAL_GPIO_WritePin(cur_handle->cs_port, cur_handle->cs_pin, GPIO_PIN_RESET);
+
+    return HAL_OK;
+}
+HAL_StatusTypeDef SD_SPI_Deselect_Card(SD_SPI_Handle *cur_handle) {
+        if (cur_handle == NULL || cur_handle->cs_port == NULL || cur_handle->cs_pin == 0) {
+        return HAL_ERROR;
+    }
+    HAL_GPIO_WritePin(cur_handle->cs_port, cur_handle->cs_pin, GPIO_PIN_SET);
+
+    uint8_t filler_byte;
+
+    return SD_SPI_Interchange_Byte(cur_handle, 0xff, &filler_byte);
+}
+
 
 /** Function for sending 10 0xff bytes which are required for startup.
  */
